@@ -1,0 +1,224 @@
+---
+title: "mini-projet - serie temporelle"
+author: "XU Yijie, ZHONG Ming (groupe MAM4_SD)"
+date: "28/03/2019"
+---
+
+objective: estimate the deterministic component of a time series
+
+data source: https://datamarket.com/data/set/22ky/monthly-total-number-of-pigs-slaughtered-in-victoria-jan-1980-august-1995#!ds=22ky&display=line
+
+tools: filters and difference operators
+
+-------------------------------------------------------------
+
+initialization
+
+```{r setup, include=FALSE}
+# import time series data
+tsData <- read.csv("monthly-total-number-of-pigs-sla.csv")
+
+# remove rows with missing values
+tsData <- na.omit(tsData)
+
+# The first column of data is the year and month, ex: '1980-09'
+# the second column of data is the number of pigs slaughtered each month. (in Victoria. Jan 1980 – August 1995)
+num_pig <- tsData[,2]
+# we assume that the period d of the seasonal component is 12
+d = 12 
+pig_ts <- ts(num_pig,frequency = d)
+```
+
+Plot time series
+
+```{r}
+ts.plot(tsData,ylab = expression(X[t]))
+```
+
+
+```{r}
+decom_ts<- decompose(pig_ts)
+plot(decom_ts)
+```
+```{r}
+# the expectation of random noise component E(Y_t)
+mean(na.omit(decom_ts$random))
+```
+
+E(Y_t) = 98.63634
+then we can replace m_t and Y_t with m_t + E(Y_t) and Y_t − E(Y_t) respectively.
+ 
+
+Estimation and Elimination of Trend in the Absence of Seasonality : 
+
+-------------------------------------------------------------
+
+Trend Estimation
+
+
+trend estimation 1 : Moving average filter
+
+```{r}
+# n : length of data = 188
+n = length(pig_ts)
+# Let q be a nonnegative integer
+q = 2
+# add data to the edge
+x_t <- c(rep(pig_ts[1], q), pig_ts, rep(pig_ts[n], q))
+w_t <- rep(0,n)
+
+
+for (i in q+1:n+q) {
+  for (j in -q:q) {
+    w_t[i] = w_t[i] + x_t[i+j]
+  }
+}
+w_t = w_t/(2*q+1)
+ts.plot(tsData,ylab = expression(X[t]))
+lines(w_t,col="red")
+```
+
+trend estimation 2 : Exponential smoothing
+
+```{r}
+# fixed α ∈ [0, 1],
+alpha = 0.3
+# the one-sided moving averages m_t_hat
+m_t_hat <- rep(0,n)
+
+# mˆ1 = X1
+m_t_hat[1] = pig_ts[1]
+m_t_hat[2] = pig_ts[1]
+for (i in 3:n) {
+  for (j in 0:i-2) {
+    m_t_hat[i] = m_t_hat[i] + alpha*(1-alpha)^j*pig_ts[i-j]
+  }
+  m_t_hat[i] = m_t_hat[i] + (1-alpha)^(i-1)*pig_ts[1]
+}
+
+m_t_hat = m_t_hat / 2
+
+ts.plot(tsData,ylab = expression(X[t]))
+lines(m_t_hat,col="red")
+```
+
+trend estimation 3 : Polynomial fitting (use the method of least squares)
+
+```{r}
+# we suppose the trend of the form : m_t = a0 + a1*t + a2*t^2
+t = 1:length(num_pig)
+tt = t^2
+a <- lm(num_pig~t + tt)$coefficients
+m_t_poly = a[1] + a[2]*t + a[3]*tt
+ts.plot(tsData,ylab = expression(X[t]))
+lines(m_t_poly,col="red")
+```
+
+It seems that it is under-fitting，so we increase the degree
+
+```{r}
+# we suppose the trend of the form : m_t = a0 + a1*t + a2*t^2 + a3*t^3
+ttt = t^3
+a2 <- lm(num_pig~t + tt + ttt)$coefficients
+m_t_poly_2 = a2[1] + a2[2]*t + a2[3]*tt + a2[4]*ttt
+ts.plot(tsData,ylab = expression(X[t]))
+lines(m_t_poly_2,col="red")
+```
+
+-------------------------------------------------------------
+
+Trend Elimination by Differencing
+
+```{r}
+# if m_t is a polynomial of degree k
+k = 3
+pig_diff <- diff(num_pig,differences = k)
+plot.ts(pig_diff)
+```
+
+-------------------------------------------------------------
+
+Validate with the commands of some time series packages.
+
+```{r}
+library(tseries)
+library(forecast)
+library(itsmr)
+# check if our time series data is stationary with Augmented Dickey–Fuller (ADF) t-statistic test
+adf.test(pig_ts, alternative="stationary", k=0)
+```
+
+Test for moving average filter
+
+```{r}
+w_t_package = smooth.ma(pig_ts,q)
+ts.plot(tsData,ylab = expression(X[t]))
+lines(w_t,col="red")
+lines(w_t_package,col="green")
+```
+
+Test for exponential smoothing
+
+```{r}
+m_t_hat_package <- HoltWinters(num_pig, beta=FALSE, gamma=FALSE)
+ts.plot(tsData,ylab = expression(X[t]))
+lines(m_t_hat,col="red")
+lines(m_t_hat_package$fitted[,1],col="green")
+```
+
+-------------------------------------------------------------
+
+Estimation and Elimination of Both Trend and Seasonality : 
+
+-------------------------------------------------------------
+
+the period d of the seasonal component is 12
+
+Estimation of Trend and Seasonal Components
+
+```{r}
+# the trend is first estimated by applying
+# a moving average filter specially chosen to eliminate the seasonal component and to dampen the noise
+q = d/2
+n = length(pig_ts) 
+x_t <- c(rep(pig_ts[1], q), pig_ts, rep(pig_ts[n], q))
+m_t_hat <- rep(0,n)
+
+for (i in q+1:n+q) {
+  for (j in -q+1:q-1) {
+    m_t_hat[i] = m_t_hat[i] + x_t[i+j]
+  }
+  m_t_hat[i] = m_t_hat[i] + 0.5*x_t[i+q] + 0.5*x_t[i-q]
+}
+m_t_hat = m_t_hat/d
+# we compute the average w_k of the deviations (x_(k+jd)−m_(k+jd))
+w_k = x_t-m_t_hat
+# we estimate the seasonal component s_k ：
+sum_w_k = 0
+for (i in 1:d){
+  sum_w_k = sum_w_k + w_k[i]
+}
+s_k = w_k - d^(-1)*sum_w_k
+# the deseasonalized data is then defined to be the original series with the estimated seasonal component removed
+d_t = x_t - s_k
+# Random = Time series – Trend – Seasonal
+y_t_hat = x_t - m_t_hat -s_k
+d_t = d_t - mean(na.omit(y_t_hat))
+ts.plot(tsData,ylab = expression(X[t]))
+lines(d_t,col="red")
+```
+
+-------------------------------------------------------------
+
+Elimination of Trend and Seasonal Components by Differencing
+
+```{r}
+# if m_t is a polynomial of degree k
+k = 3
+# the period d of the seasonal component is d
+d = 12 
+
+# lag = the period d of the seasonal component = d,  differences = degree of polynomial = k
+pig_diff <- diff(diff(num_pig,lag = d,differences = 1),lag = 1,differences = k-1)
+plot.ts(pig_diff)
+```
